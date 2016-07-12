@@ -1,0 +1,12 @@
+[package]
+name = "test_pipe"
+version = "0.1.0"
+authors = ["Shibby"]
+
+[dependencies]
+memmap = "0.4.0"
+rand = "0.3.14"
+
+[dependencies.macaroons]
+git = "https://github.com/panicbit/rust-macaroons.git"
+branch = "dev"
