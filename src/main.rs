@@ -92,15 +92,7 @@ impl Key {
 
     fn genkey(&mut self) {
         let mut osrng = OsRng::new().expect("Failed to start OsRng during Key::genkey");
-        let mut word: [u32; 8] = [0; 8];
-        word[0] = osrng.next_u32();
-        word[1] = osrng.next_u32();
-        word[2] = osrng.next_u32();
-        word[3] = osrng.next_u32();
-        word[4] = osrng.next_u32();
-        word[5] = osrng.next_u32();
-        word[6] = osrng.next_u32();
-        word[7] = osrng.next_u32();
+        let mut word: [u32; 8] = osrng.gen();
         println!("{:?}", &word);
         let mut chacha = ChaChaRng::from_seed(&word);
         chacha.fill_bytes( unsafe { &mut self.key.as_mut_slice() });
@@ -123,17 +115,9 @@ impl GetVideo {
     }
 
     pub fn get_identity() -> [u8; 512] {
-        let mut id: [u8; 512] = [0; 512];
-        let mut word: [u32; 8] = [0; 8];
         let mut osrng = OsRng::new().expect("Failed to generate identity");
-        word[0] = osrng.next_u32();
-        word[1] = osrng.next_u32();
-        word[2] = osrng.next_u32();
-        word[3] = osrng.next_u32();
-        word[4] = osrng.next_u32();
-        word[5] = osrng.next_u32();
-        word[6] = osrng.next_u32();
-        word[7] = osrng.next_u32();
+        let mut id: [u8; 512] = [0; 512];
+        let mut word: [u32; 8] = osrng.gen();
         let mut chacha = ChaChaRng::from_seed(&mut word);
         chacha.fill_bytes(&mut id);
         id
