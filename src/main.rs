@@ -1,3 +1,4 @@
+#![feature(type_ascription)]
 extern crate memmap;
 extern crate rand;
 extern crate macaroons;
@@ -18,12 +19,14 @@ use macaroons::verifier::Verifier;
 
 struct Server {
     server: TcpListener,
+    interface: Api,
 }
 
 impl Server {
     pub fn new() -> Server {
         Server {
             server: TcpListener::bind("127.0.0.1:12345").expect("Unable to bind"),
+            interface: Api::new(),
         }
     }
 
@@ -50,12 +53,6 @@ impl Server {
     }
 }
 
-//  struct Client
-//  source: Read video from server
-//  cursor: To stdin of vlc
-//  bufwriter: From Cursor to file //temporary
-//  path: Local copy of destination file
-
 struct Client {
     source: BufWriter<TcpStream>,
 }
@@ -69,7 +66,6 @@ impl Client {
 
     fn write(&mut self) {
         let mut string = "TEST".to_string();
-        println!("Writing: TEST");
         self.source.write(string.as_bytes());
     }
 }
@@ -101,36 +97,97 @@ impl Key {
 }
     
 
-struct GetVideo {
-    path: Option<String>,
-    identity: [u8; 512],
+struct Api {
+    auth: Auth,
 }
 
-impl GetVideo {
-    fn new() -> GetVideo {
-        GetVideo {
-            path: None,
-            identity: GetVideo::get_identity(),
+impl Api {
+    pub fn new() -> Api {
+        Api {
+            auth: Auth::new(),
+        }
+    }
+}
+    
+
+struct Auth {
+    auth_type: MacaroonAuth,
+}
+
+impl Auth {
+    pub fn new() -> Auth {
+        Auth {
+            auth_type: MacaroonAuth::new(),
+        }
+    }
+}
+
+struct MacaroonAuth {
+    minter: MacaroonMinter,
+    challenge: Option<Token>,
+    authed: bool,
+    new_token: Option<Token>,
+}
+
+struct MacaroonMinter {
+    id_rng: ChaChaRng,
+}
+
+impl MacaroonAuth {
+    pub fn new() -> MacaroonAuth {
+        MacaroonAuth {
+            minter: MacaroonMinter::new(),
+            challenge: None,
+            authed: false,
+            new_token: None,
+        }
+    }
+}
+
+impl MacaroonMinter {
+    pub fn new() -> MacaroonMinter {
+        MacaroonMinter {
+            id_rng: MacaroonMinter::get_identity_rng(),
         }
     }
 
-    pub fn get_identity() -> [u8; 512] {
+    pub fn get_identity_rng() -> ChaChaRng {
         let mut osrng = OsRng::new().expect("Failed to generate identity");
-        let mut id: [u8; 512] = [0; 512];
         let mut word: [u32; 8] = osrng.gen();
         let mut chacha = ChaChaRng::from_seed(&mut word);
-        chacha.fill_bytes(&mut id);
+    }
+
+    pub fn get_identity(&self) -> [u8; 512] {
+        let mut id: [u8; 512] = [0; 512];
+        self.id_rng.fill_bytes(&mut id);
         id
     }
 
-    fn gen_video_caveats(&self) {
-        let video_caveat = Caveat::first_party(b"video = ME3331".to_vec());
-        let time_caveat = Caveat::first_party(b"time < 2017-12-19T16:39:57-08:00".to_vec());
-// Chrono::DateTime::parse_from_rfc2822
-        let acct_caveat = Caveat::first_party(b"acc = test_account".to_vec());
+///  This array MUST be verified [0..] 
+///  array[0] must always contain the service that is being accessed
+///  array[1] must contain the user identification
+///-----------------------------------------------------------------
+///  || array[0] and array[1] can be thought of as service caveats
+///-----------------------------------------------------------------
+///  array[2] might contain which interface the user is accessing
+///    perhaps "interface = admin" || "interface = user" || "interface = moderator"
+///  array[3] might be which api function we want to access
+///  array[4..] might be the user supplied data, functions, the sky is the limit.
+
+    fn service_caveats() -> [Caveat; 3] {
+        let service: Caveat = Caveat::first_party(b"service = testservice_please_ignore".to_vec());
+        let mut array: [Caveat; 3] = [service; 3];
+//      array[0] is service caveat, it must be the first to be verified.
+        array[1] = Caveat::first_party(b"id = test_id_please_remove".to_vec());
+        array[2] = Caveat::first_party(b"interface = visitor".to_vec());
     }
 
-    
+    fn mint_token(self, caveat: [Caveat], key: Key) -> Token {
+        Token::new( unsafe { key.key.as_slice(); }, { self.id_rng.get_identity(); }, None)
+              .add_caveat(caveat[0])
+              .add_caveat(caveat[1])
+              .add_caveat(caveat[2]);
+    }
 }
 
 fn main() {
@@ -142,7 +199,12 @@ fn main() {
     println!("Client Started!");
     let mut key = Key::new();
     key.genkey();
-    println!("{:?}", unsafe { key.key.as_slice() } );
+    let mut api_auth = Auth::new();
+    let macaroon_interface = MacaroonAuth::new();
+    api_auth(&macaroon_interface);
+    let service_caveats = MacaroonMinter::service_caveats();
+    let service_token = macaroon_interface.mint_token(service_caveats);
+    println!("Printing Service Token:{:?}", service_token);
     client.join();
     server.join();
 }
