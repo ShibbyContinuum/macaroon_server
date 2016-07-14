@@ -96,6 +96,7 @@ impl Key {
     }
 }
     
+//  The Api Structure should hold all the modules this server would like to utilize.
 
 struct Api {
     auth: Auth,
@@ -109,15 +110,18 @@ impl Api {
     }
 }
     
-
+// The Auth structure is the "Auth Module", the auth_type can by any authentication
+// scheme, 
 struct Auth {
     auth_type: MacaroonAuth,
+    is_auth: bool,
 }
 
 impl Auth {
     pub fn new() -> Auth {
         Auth {
             auth_type: MacaroonAuth::new(),
+            is_auth: false,
         }
     }
 }
@@ -176,14 +180,15 @@ impl MacaroonMinter {
 
     fn service_caveats() -> [Caveat; 3] {
         let service: Caveat = Caveat::first_party(b"service = testservice_please_ignore".to_vec());
-        let mut array: [Caveat; 3] = [service; 3];
+        let mut array: [Caveat; 3] = [Caveat::first_party(b"service = testservice_please_ignore".to_vec()); 3];
 //      array[0] is service caveat, it must be the first to be verified.
         array[1] = Caveat::first_party(b"id = test_id_please_remove".to_vec());
         array[2] = Caveat::first_party(b"interface = visitor".to_vec());
     }
 
-    fn mint_token(self, caveat: [Caveat], key: Key) -> Token {
-        Token::new( unsafe { key.key.as_slice(); }, { self.id_rng.get_identity(); }, None)
+    fn mint_token(self, caveat: [Caveat; 3], key: Key) -> Token {
+        let id = self.get_identity();
+        Token::new( unsafe { key.key.as_slice() }, id.to_vec() , None)
               .add_caveat(caveat[0])
               .add_caveat(caveat[1])
               .add_caveat(caveat[2]);
@@ -203,7 +208,7 @@ fn main() {
     let macaroon_interface = MacaroonAuth::new();
     api_auth(&macaroon_interface);
     let service_caveats = MacaroonMinter::service_caveats();
-    let service_token = macaroon_interface.mint_token(service_caveats);
+    let service_token = macaroon_interface.minter.mint_token(service_caveats, key);
     println!("Printing Service Token:{:?}", service_token);
     client.join();
     server.join();
