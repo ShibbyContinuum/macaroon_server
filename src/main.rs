@@ -1,6 +1,5 @@
 #![feature(type_ascription)]
 
-extern crate memmap;
 extern crate rand;
 extern crate macaroons;
 
@@ -9,7 +8,6 @@ use std::io::{ BufWriter, BufReader };
 use std::net::{ TcpStream, TcpListener };
 use std::thread;
 
-use memmap::*;
 use rand::{ Rng, SeedableRng };
 use rand::os::OsRng;
 use rand::chacha::ChaChaRng;
@@ -98,7 +96,6 @@ impl Key {
     fn genkey(&mut self) {
         let mut osrng = OsRng::new().expect("Failed to start OsRng during Key::genkey");
         let mut word: [u32; 8] = osrng.gen();
-        println!("{:?}", &word);
         let mut chacha = ChaChaRng::from_seed(&word);
         chacha.fill_bytes(&mut self.key[0..]);
     }
@@ -162,17 +159,6 @@ impl MacaroonMinter {
         id
     }
 
-///  This array MUST be verified [0..] 
-///  array[0] must always contain the service that is being accessed
-///  array[1] must contain the user identification
-///-----------------------------------------------------------------
-///  || array[0] and array[1] can be thought of as service caveats
-///-----------------------------------------------------------------
-///  array[2] might contain which interface the user is accessing
-///    perhaps "interface = admin" || "interface = user" || "interface = moderator"
-///  array[3] might be which api function we want to access
-///  array[4..] might be the user supplied data, functions, the sky is the limit.
-
     fn mint_token(&mut self, key: &Key) -> Token {
         let id = self.get_identity();
         let token = Token::new( &key.key[0..], id.to_vec() , None);
@@ -186,7 +172,7 @@ fn main() {
 //TODO Make server iron
     println!("Server Started!");
     println!("Starting Client..");
-    let client = thread::spawn(move || { Client::new().write(); Client::new().write(); });
+    let client = thread::spawn(move || { Client::new(); });
     println!("Client Started!");
     let mut key = Key::new();
     key.genkey();
@@ -201,6 +187,12 @@ fn main() {
     let de = Token::serialize(&s_token);
     println!("{}", de);
     println!("Valid: {}", Token::verify(&s_token, &key.key[0..] ));
+    let u_token = add_caveats!(s_token,
+        Caveat::first_party(b"user = panicbit".to_vec())
+    );
+    let ude = Token::serialize(&u_token);
+    println!("{}", ude);
+    println!("Valid: {}", Token::verify(&u_token, &key.key[0..] ));
     client.join();
     server.join();
 }
