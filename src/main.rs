@@ -1,4 +1,5 @@
 #![feature(type_ascription)]
+
 extern crate memmap;
 extern crate rand;
 extern crate macaroons;
@@ -16,6 +17,15 @@ use rand::chacha::ChaChaRng;
 use macaroons::token::Token;
 use macaroons::caveat::Caveat;
 use macaroons::verifier::Verifier;
+
+macro_rules! add_caveats {
+    ($token:expr, $($caveat:expr),*) => {
+        $token
+        $(
+            .add_caveat($caveat.into())
+        )*
+    }
+}
 
 struct Server {
     server: TcpListener,
@@ -74,15 +84,14 @@ impl Client {
 //  MESSING THIS UP WILL MAKE YOUR MACAROONS WORTHLESS, SHARING THIS WILL MAKE YOUR MACAROONS WORTHLESS.
 //  THIS IS NOT GAURANTEED TO NOT BE MESSED UP, IF CONSIDERING THIS LIB FOR PRODUCTION USAGE TURN BACK NOW.
 //  WARNING: THIS IS AN UNVETTED IMPLEMENTATION.  REALLY DO NOT USE THIS IMPLEMENTATION. (as of July 12, 2016)
-
 struct Key {
-    key: Mmap,
+    key: [u8; 512],
 }
 
 impl Key {
     pub fn new() -> Key {
         Key {
-            key: Mmap::anonymous(512, Protection::ReadWrite).expect("Unable to create memory map"),
+            key: [0; 512],
         }
     }
 
@@ -91,36 +100,21 @@ impl Key {
         let mut word: [u32; 8] = osrng.gen();
         println!("{:?}", &word);
         let mut chacha = ChaChaRng::from_seed(&word);
-        chacha.fill_bytes( unsafe { &mut self.key.as_mut_slice() });
-        self.key.set_protection(Protection::Read);
+        chacha.fill_bytes(&mut self.key[0..]);
     }
 }
     
 //  The Api Structure should hold all the modules this server would like to utilize.
 
 struct Api {
-    auth: Auth,
+    auth: MacaroonAuth,
+    is_auth: bool,
 }
 
 impl Api {
     pub fn new() -> Api {
         Api {
-            auth: Auth::new(),
-        }
-    }
-}
-    
-// The Auth structure is the "Auth Module", the auth_type can by any authentication
-// scheme, 
-struct Auth {
-    auth_type: MacaroonAuth,
-    is_auth: bool,
-}
-
-impl Auth {
-    pub fn new() -> Auth {
-        Auth {
-            auth_type: MacaroonAuth::new(),
+            auth: MacaroonAuth::new(),
             is_auth: false,
         }
     }
@@ -129,8 +123,8 @@ impl Auth {
 struct MacaroonAuth {
     minter: MacaroonMinter,
     challenge: Option<Token>,
-    authed: bool,
     new_token: Option<Token>,
+    verifier: Option<Verifier>,
 }
 
 struct MacaroonMinter {
@@ -142,11 +136,11 @@ impl MacaroonAuth {
         MacaroonAuth {
             minter: MacaroonMinter::new(),
             challenge: None,
-            authed: false,
             new_token: None,
+            verifier: None,
         }
     }
-}
+}        
 
 impl MacaroonMinter {
     pub fn new() -> MacaroonMinter {
@@ -159,9 +153,10 @@ impl MacaroonMinter {
         let mut osrng = OsRng::new().expect("Failed to generate identity");
         let mut word: [u32; 8] = osrng.gen();
         let mut chacha = ChaChaRng::from_seed(&mut word);
+        chacha
     }
 
-    pub fn get_identity(&self) -> [u8; 512] {
+    pub fn get_identity(&mut self) -> [u8; 512] {
         let mut id: [u8; 512] = [0; 512];
         self.id_rng.fill_bytes(&mut id);
         id
@@ -178,38 +173,34 @@ impl MacaroonMinter {
 ///  array[3] might be which api function we want to access
 ///  array[4..] might be the user supplied data, functions, the sky is the limit.
 
-    fn service_caveats() -> [Caveat; 3] {
-        let service: Caveat = Caveat::first_party(b"service = testservice_please_ignore".to_vec());
-        let mut array: [Caveat; 3] = [Caveat::first_party(b"service = testservice_please_ignore".to_vec()); 3];
-//      array[0] is service caveat, it must be the first to be verified.
-        array[1] = Caveat::first_party(b"id = test_id_please_remove".to_vec());
-        array[2] = Caveat::first_party(b"interface = visitor".to_vec());
-    }
-
-    fn mint_token(self, caveat: [Caveat; 3], key: Key) -> Token {
+    fn mint_token(&mut self, key: &Key) -> Token {
         let id = self.get_identity();
-        Token::new( unsafe { key.key.as_slice() }, id.to_vec() , None)
-              .add_caveat(caveat[0])
-              .add_caveat(caveat[1])
-              .add_caveat(caveat[2]);
+        let token = Token::new( &key.key[0..], id.to_vec() , None);
+        token
     }
 }
 
 fn main() {
     println!("Starting Server..");
     let server = thread::spawn(move || { Server::new().listen(); });
+//TODO Make server iron
     println!("Server Started!");
     println!("Starting Client..");
     let client = thread::spawn(move || { Client::new().write(); Client::new().write(); });
     println!("Client Started!");
     let mut key = Key::new();
     key.genkey();
-    let mut api_auth = Auth::new();
-    let macaroon_interface = MacaroonAuth::new();
-    api_auth(&macaroon_interface);
-    let service_caveats = MacaroonMinter::service_caveats();
-    let service_token = macaroon_interface.minter.mint_token(service_caveats, key);
-    println!("Printing Service Token:{:?}", service_token);
+    let mut api = Api::new();
+    let service_token = api.auth.minter.mint_token(&key);
+    let se = Token::serialize(&service_token);
+    println!("{}", se);
+    println!("Valid: {}", Token::verify(&service_token, &key.key[0..] ));
+    let s_token = add_caveats!(service_token, 
+        Caveat::first_party(b"interface = portal".to_vec())
+    );
+    let de = Token::serialize(&s_token);
+    println!("{}", de);
+    println!("Valid: {}", Token::verify(&s_token, &key.key[0..] ));
     client.join();
     server.join();
 }
