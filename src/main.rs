@@ -5,6 +5,7 @@ extern crate macaroons;
 
 use std::io::prelude::*;
 use std::io::{ BufWriter, BufReader };
+use std::prelude::*;
 use std::net::{ TcpStream, TcpListener };
 use std::thread;
 
@@ -57,24 +58,26 @@ impl Server {
         let mut bufreader = BufReader::new(stream);
         let mut vec: Vec<u8> = Vec::new();
         bufreader.read_to_end(&mut vec);
-        println!("{:?}", vec);
+        println!("{:?}", String::from_utf8(vec));
     }
 }
 
 struct Client {
-    source: BufWriter<TcpStream>,
+    connection: BufWriter<TcpStream>,
 }
 
 impl Client {
     fn new() -> Client {
         Client {
-            source: BufWriter::new(TcpStream::connect("127.0.0.1:12345").expect("Unable to Connect")),
+            connection: BufWriter::new(TcpStream::connect("127.0.0.1:12345").expect("Unable to Connect")),
         }
     }
 
-    fn write(&mut self) {
-        let mut string = "TEST".to_string();
-        self.source.write(string.as_bytes());
+    fn write(&mut self, buf: &[u8]) {
+        match self.connection.write_all(buf) {
+            Ok(o) => {},
+            Err(e) => println!("Write failed: {}", e),
+        }
     }
 }
 
@@ -171,28 +174,18 @@ fn main() {
     let server = thread::spawn(move || { Server::new().listen(); });
 //TODO Make server iron
     println!("Server Started!");
-    println!("Starting Client..");
-    let client = thread::spawn(move || { Client::new(); });
     println!("Client Started!");
     let mut key = Key::new();
     key.genkey();
     let mut api = Api::new();
     let service_token = api.auth.minter.mint_token(&key);
-    let se = Token::serialize(&service_token);
-    println!("{}", se);
-    println!("Valid: {}", Token::verify(&service_token, &key.key[0..] ));
     let s_token = add_caveats!(service_token, 
         Caveat::first_party(b"interface = portal".to_vec())
     );
-    let de = Token::serialize(&s_token);
-    println!("{}", de);
-    println!("Valid: {}", Token::verify(&s_token, &key.key[0..] ));
-    let u_token = add_caveats!(s_token,
-        Caveat::first_party(b"user = panicbit".to_vec())
-    );
-    let ude = Token::serialize(&u_token);
-    println!("{}", ude);
-    println!("Valid: {}", Token::verify(&u_token, &key.key[0..] ));
+    println!("Starting Client!");
+    let client = thread::spawn(move || {
+        let client = Client::new().write(&s_token.serialize().into_bytes());
+    });
     client.join();
     server.join();
 }
