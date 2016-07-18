@@ -8,6 +8,7 @@ use std::io::{ BufWriter, BufReader };
 use std::prelude::*;
 use std::net::{ TcpStream, TcpListener };
 use std::thread;
+use std::str;
 
 use rand::{ Rng, SeedableRng };
 use rand::os::OsRng;
@@ -46,7 +47,10 @@ impl Server {
                 Ok(stream) => {
 // TODO: Implement ThreadPool::new()
                     thread::spawn(move|| {
-                        Server::handle_connection(stream)
+                        match Server::handle_connection(stream) {
+                            Ok(received) => { println!("{}", received); },
+                            Err(e) => { panic!("Bad Data, bleh"); },
+                        }
                     });
                 }
                 Err(e) => { println!("Connection Failed: {}", e); }
@@ -54,11 +58,12 @@ impl Server {
         }
     }
 
-    fn handle_connection(stream: TcpStream) {
+    fn handle_connection(stream: TcpStream) -> Result<String, std::string::FromUtf8Error> {
         let mut bufreader = BufReader::new(stream);
         let mut vec: Vec<u8> = Vec::new();
         bufreader.read_to_end(&mut vec);
-        println!("{:?}", String::from_utf8(vec));
+        let str = String::from_utf8(vec);
+        str
     }
 }
 
@@ -85,6 +90,7 @@ impl Client {
 //  MESSING THIS UP WILL MAKE YOUR MACAROONS WORTHLESS, SHARING THIS WILL MAKE YOUR MACAROONS WORTHLESS.
 //  THIS IS NOT GAURANTEED TO NOT BE MESSED UP, IF CONSIDERING THIS LIB FOR PRODUCTION USAGE TURN BACK NOW.
 //  WARNING: THIS IS AN UNVETTED IMPLEMENTATION.  REALLY DO NOT USE THIS IMPLEMENTATION. (as of July 12, 2016)
+
 struct Key {
     key: [u8; 512],
 }
@@ -170,15 +176,12 @@ impl MacaroonMinter {
 }
 
 fn main() {
-    println!("Starting Server..");
-    let server = thread::spawn(move || { Server::new().listen(); });
-//TODO Make server iron
-    println!("Server Started!");
-    println!("Client Started!");
     let mut key = Key::new();
     key.genkey();
     let mut api = Api::new();
     let service_token = api.auth.minter.mint_token(&key);
+    println!("Starting Server..");
+    let server = thread::spawn(move || { Server::new().listen(); });
     let s_token = add_caveats!(service_token, 
         Caveat::first_party(b"interface = portal".to_vec())
     );
