@@ -2,6 +2,10 @@
 
 extern crate rand;
 extern crate macaroons;
+extern crate hex;
+extern crate redis;
+extern crate tiny_keccak;
+extern crate serde_json;
 
 use std::io::prelude::*;
 use std::io::{ BufWriter, BufReader };
@@ -9,6 +13,9 @@ use std::prelude::*;
 use std::net::{ TcpStream, TcpListener };
 use std::thread;
 use std::str;
+use std::collections::HashMap;
+use std::path::Path;
+use std::fs::OpenOptions;
 
 use rand::{ Rng, SeedableRng };
 use rand::os::OsRng;
@@ -17,6 +24,13 @@ use rand::chacha::ChaChaRng;
 use macaroons::token::Token;
 use macaroons::caveat::Caveat;
 use macaroons::verifier::Verifier;
+
+use hex::*;
+
+use redis::{ Commands, Connection };
+
+use serde_json::Value;
+use serde_json::builder;
 
 macro_rules! add_caveats {
     ($token:expr, $($caveat:expr),*) => {
@@ -40,7 +54,7 @@ impl Server {
         }
     }
 
-    fn listen(&self) {
+    fn listen(&self, key: [u8; 512]) {
         println!("Listening");
         for stream in self.server.incoming() {
             match stream {
@@ -48,7 +62,17 @@ impl Server {
 // TODO: Implement ThreadPool::new()
                     thread::spawn(move|| {
                         match Server::handle_connection(stream) {
-                            Ok(received) => { println!("{}", received); },
+                            Ok(received) => match received.verify(&key) {
+                                true => { println!("Valid Token: {:?}", String::from_utf8(received.identifier));
+                                          
+                                          let field = Fields::new();
+                                          field.set_macaroon(received.identifier.to_vec());
+                                          field.set_id(received.caveats[0].caveat_id.to_vec());
+                                          field.set_video_request(received.caveats[1].caveat_id.to_vec()); 
+                                },
+                                false => { println!("false"); 
+                                },
+                            },
                             Err(e) => { panic!("Bad Data, bleh"); },
                         }
                     });
@@ -58,12 +82,12 @@ impl Server {
         }
     }
 
-    fn handle_connection(stream: TcpStream) -> Result<String, std::string::FromUtf8Error> {
+    fn handle_connection(stream: TcpStream) -> Result<Token, &'static str> {
         let mut bufreader = BufReader::new(stream);
         let mut vec: Vec<u8> = Vec::new();
         bufreader.read_to_end(&mut vec);
-        let str = String::from_utf8(vec);
-        str
+        let token_result = Token::deserialize(&mut vec);
+        token_result
     }
 }
 
@@ -105,6 +129,19 @@ impl Key {
     fn genkey(&mut self) {
         let mut osrng = OsRng::new().expect("Failed to start OsRng during Key::genkey");
         let mut word: [u32; 8] = osrng.gen();
+        let mut chacha = ChaChaRng::from_seed(&word);
+        chacha.fill_bytes(&mut self.key[0..]);
+    }
+
+    fn genkey_write_once(&mut self, path: & Path) {
+        let mut osrng = OsRng::new().expect("Failed to start OsRng during Key::genkey_write_once");
+        let mut word: [u32; 8] = osrng.gen();
+        let mut file = OpenOptions::new()
+                                   .write(true)
+                                   .create(true)
+                                   .open(&path);
+
+        file.write_all(word.clone());
         let mut chacha = ChaChaRng::from_seed(&word);
         chacha.fill_bytes(&mut self.key[0..]);
     }
@@ -169,26 +206,145 @@ impl MacaroonMinter {
     }
 
     fn mint_token(&mut self, key: &Key) -> Token {
-        let id = self.get_identity();
-        let token = Token::new( &key.key[0..], id.to_vec() , None);
+        let id = self.get_identity().as_mut().to_hex();
+        let token = Token::new( &key.key[0..], id.into_bytes() , None);
+//  Write the ID to the database!  Remove the ID from the database if access has been revoked, the user
+//  may request new macaroons if their access has been revoked incorrectly! 
         token
     }
 }
 
+struct StoreToken {
+    connection: Connection,
+}
+
+impl StoreToken {
+    pub fn new(connection: Connection) -> StoreToken {
+        StoreToken {
+            connection: connection,
+        }
+    }
+}
+
+struct Fields {
+    id: Vec<u8>,
+    macaroon_id: Vec<u8>,
+    video_requested: Vec<u8>,
+}
+
+impl Fields {
+    pub fn new() -> Fields {
+        Fields {
+            id: Vec::new(),
+            macaroon_id: Vec::new(),
+            video_requested: Vec::new(),
+        }
+    }
+
+    fn set_id(&mut self, id: Vec<u8>) {
+        self.id = id
+    }
+
+    fn set_macaroon(&mut self, macaroon_id: Vec<u8>) {
+        self.macaroon_id = macaroon_id
+    }
+
+    fn set_video_request(&mut self, video_requested: Vec<u8>) {
+        self.video_requested = video_requested
+    }
+}
+
+struct AuthRedis {
+    token_store: StoreToken,
+    PII_KEY: Key,
+    field: Fields,
+}
+
+impl AuthRedis {
+    pub fn new(connection: redis::Connection) -> AuthRedis {
+        AuthRedis {
+            token_store: StoreToken::new(connection),
+            PII_KEY: AuthRedis::gen_pii_key(),
+            field: Fields::new(),
+        }
+    }
+
+    fn gen_pii_key() -> Key {
+        let mut key = Key::new();
+        key.genkey();
+        key
+    }
+
+    fn hash(&self) -> [u8; 32] {
+        let mut sha3 = Keccak::new_sha3_256();
+        sha3.update(&self.field.id);
+        sha3.update(&self.field.video_requested);
+        sha3.update(self.PII_KEY);
+        let mut res: [u8; 32] = [0; 32];
+        sha3.finalize(&mut res);
+        res
+    }
+
+    fn store_pair(&self) -> redis::RedisResult<()> {
+        let rr = match redis::cmd("SET").arg(&self.hash())
+                       .arg(self.field.macaroon_id)
+                       .query(&self.token_store.connection) {
+            Ok(x) => x,
+            Err(e) => e,
+        };
+        rr
+    }
+
+
+    fn is_auth(&self) -> bool {
+        let exists = match redis::cmd("EXISTS").arg(&self.hash())
+                                 .arg(self.field.macaroon_id)
+                                 .query(&self.token_store.connection) {
+            Ok(x) => true,
+            Err(e) => false,
+        };
+        exists
+    }
+
+    fn revoke(&self) -> redis::RedisResult<()> {
+        let rr = match redis::cmd("DEL").arg(&self.hash())
+                             .query(&self.token_store.connection) {
+            Ok(x) => x,
+            Err(e) => e,
+        };
+        rr
+    }
+}
+
 fn main() {
+
     let mut key = Key::new();
+
     key.genkey();
+
     let mut api = Api::new();
+
     let service_token = api.auth.minter.mint_token(&key);
+
     println!("Starting Server..");
-    let server = thread::spawn(move || { Server::new().listen(); });
+
+    let server = thread::spawn(move || { 
+        AuthRedis::new(redis::Client::open("redis://127.0.0.1/").unwrap().get_connection().unwrap());
+        Server::new().listen(key.key); 
+    });
+
     let s_token = add_caveats!(service_token, 
-        Caveat::first_party(b"interface = portal".to_vec())
+        Caveat::first_party(b"id = 00000000".to_vec()),
+        Caveat::first_party(b"video = Fire".to_vec())
     );
+
     println!("Starting Client!");
+
     let client = thread::spawn(move || {
         let client = Client::new().write(&s_token.serialize().into_bytes());
     });
+
     client.join();
+
     server.join();
 }
