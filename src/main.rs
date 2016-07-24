@@ -31,7 +31,7 @@ use macaroons::verifier::Verifier;
 
 use hex::*;
 
-use redis::{ Commands, Connection, Client, ConnectionLike };
+use redis::{ Commands, Connection, Client, ConnectionLike, Cmd };
 
 use serde_json::Value;
 use serde_json::builder;
@@ -293,10 +293,8 @@ impl AuthRedis {
         str::from_utf8(&res[..]);
     }
 
-    fn store_pair<'a>(&self) -> redis::RedisResult<()> {
-        redis::ConnectionLike::req_packed_command(&self.token_store.connection, 
-            redis::cmd("SET").arg(self.hash()).arg(&self.field.macaroon_id[..])
-        );
+    fn store_pair<'a>(&self) -> &mut Cmd {
+        redis::cmd("SET").arg(self.hash()).arg(&self.field.macaroon_id[..])
     }
 
 
