@@ -6,6 +6,7 @@ extern crate hex;
 extern crate redis;
 extern crate tiny_keccak;
 extern crate serde_json;
+extern crate byteorder;
 
 use std::io::prelude::*;
 use std::io::{ BufWriter, BufReader };
@@ -16,6 +17,9 @@ use std::str;
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs::OpenOptions;
+use std::io::Cursor;
+
+use byteorder::{ BigEndian, ReadBytesExt, WriteBytesExt };
 
 use rand::{ Rng, SeedableRng };
 use rand::os::OsRng;
@@ -27,10 +31,12 @@ use macaroons::verifier::Verifier;
 
 use hex::*;
 
-use redis::{ Commands, Connection };
+use redis::{ Commands, Connection, Client, ConnectionLike };
 
 use serde_json::Value;
 use serde_json::builder;
+
+use tiny_keccak::Keccak;
 
 macro_rules! add_caveats {
     ($token:expr, $($caveat:expr),*) => {
@@ -91,13 +97,13 @@ impl Server {
     }
 }
 
-struct Client {
+struct User {
     connection: BufWriter<TcpStream>,
 }
 
-impl Client {
-    fn new() -> Client {
-        Client {
+impl User {
+    fn new() -> User {
+        User {
             connection: BufWriter::new(TcpStream::connect("127.0.0.1:12345").expect("Unable to Connect")),
         }
     }
@@ -132,19 +138,20 @@ impl Key {
         let mut chacha = ChaChaRng::from_seed(&word);
         chacha.fill_bytes(&mut self.key[0..]);
     }
-
+/*
     fn genkey_write_once(&mut self, path: & Path) {
         let mut osrng = OsRng::new().expect("Failed to start OsRng during Key::genkey_write_once");
         let mut word: [u32; 8] = osrng.gen();
         let mut file = OpenOptions::new()
                                    .write(true)
                                    .create(true)
-                                   .open(&path);
+                                   .open(&path).unwrap();
 
-        file.write_all(word.clone());
+        file.write_all(&word[..]);
         let mut chacha = ChaChaRng::from_seed(&word);
         chacha.fill_bytes(&mut self.key[0..]);
     }
+*/
 }
     
 //  The Api Structure should hold all the modules this server would like to utilize.
@@ -215,16 +222,17 @@ impl MacaroonMinter {
 }
 
 struct StoreToken {
-    connection: Connection,
+    connection: redis::Client,
 }
 
 impl StoreToken {
-    pub fn new(connection: Connection) -> StoreToken {
+    pub fn new(client: redis::Client) -> StoreToken {
         StoreToken {
-            connection: connection,
+            connection: client,
         }
     }
 }
+
 
 struct Fields {
     id: Vec<u8>,
@@ -256,15 +264,15 @@ impl Fields {
 
 struct AuthRedis {
     token_store: StoreToken,
-    PII_KEY: Key,
+    pii_key: Key,
     field: Fields,
 }
 
 impl AuthRedis {
-    pub fn new(connection: redis::Connection) -> AuthRedis {
+    pub fn new(client: redis::Client) -> AuthRedis {
         AuthRedis {
-            token_store: StoreToken::new(connection),
-            PII_KEY: AuthRedis::gen_pii_key(),
+            token_store: StoreToken::new(client),
+            pii_key: AuthRedis::gen_pii_key(),
             field: Fields::new(),
         }
     }
@@ -275,44 +283,35 @@ impl AuthRedis {
         key
     }
 
-    fn hash(&self) -> [u8; 32] {
+    fn hash<'a>(&self) -> &'a str {
         let mut sha3 = Keccak::new_sha3_256();
         sha3.update(&self.field.id);
         sha3.update(&self.field.video_requested);
-        sha3.update(self.PII_KEY);
+        sha3.update(&self.pii_key.key[..]);
         let mut res: [u8; 32] = [0; 32];
         sha3.finalize(&mut res);
-        res
+        str::from_utf8(&res[..]);
     }
 
-    fn store_pair(&self) -> redis::RedisResult<()> {
-        let rr = match redis::cmd("SET").arg(&self.hash())
-                       .arg(self.field.macaroon_id)
-                       .query(&self.token_store.connection) {
-            Ok(x) => x,
-            Err(e) => e,
-        };
-        rr
+    fn store_pair<'a>(&self) -> redis::RedisResult<()> {
+        redis::ConnectionLike::req_packed_command(&self.token_store.connection, 
+            redis::cmd("SET").arg(self.hash()).arg(&self.field.macaroon_id)
+        );
     }
 
 
-    fn is_auth(&self) -> bool {
-        let exists = match redis::cmd("EXISTS").arg(&self.hash())
+    fn is_auth<'a>(&self) -> bool {
+        match redis::cmd("EXISTS").arg(self.hash())
                                  .arg(self.field.macaroon_id)
-                                 .query(&self.token_store.connection) {
+                                 .query(self.token_store.connection) {
             Ok(x) => true,
             Err(e) => false,
-        };
-        exists
+        }
     }
 
-    fn revoke(&self) -> redis::RedisResult<()> {
-        let rr = match redis::cmd("DEL").arg(&self.hash())
-                             .query(&self.token_store.connection) {
-            Ok(x) => x,
-            Err(e) => e,
-        };
-        rr
+    fn revoke<'a>(&self) -> redis::RedisResult<()> {
+        redis::cmd("DEL").arg(self.hash())
+                         .query(self.token_store.connection)
     }
 }
 
@@ -328,8 +327,11 @@ fn main() {
 
     println!("Starting Server..");
 
-    let server = thread::spawn(move || { 
-        AuthRedis::new(redis::Client::open("redis://127.0.0.1/").unwrap().get_connection().unwrap());
+    let auth_redis = thread::spawn(move || {
+        let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+        AuthRedis::new(client);
+    });
+    let server = thread::spawn(move || {
         Server::new().listen(key.key); 
     });
 
@@ -341,7 +343,7 @@ fn main() {
     println!("Starting Client!");
 
     let client = thread::spawn(move || {
-        let client = Client::new().write(&s_token.serialize().into_bytes());
+        let client = User::new().write(&s_token.serialize().into_bytes());
     });
 
     client.join();
