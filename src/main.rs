@@ -295,7 +295,7 @@ impl AuthRedis {
 
     fn store_pair<'a>(&self) -> redis::RedisResult<()> {
         redis::ConnectionLike::req_packed_command(&self.token_store.connection, 
-            redis::cmd("SET").arg(self.hash()).arg(&self.field.macaroon_id)
+            redis::cmd("SET").arg(self.hash()).arg(&self.field.macaroon_id[..])
         );
     }
 
