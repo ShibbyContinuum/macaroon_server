@@ -289,7 +289,8 @@ impl AuthRedis {
         sha3.update(&self.pii_key.key[..]);
         let mut res: [u8; 32] = [0; 32];
         sha3.finalize(&mut res);
-        let str = String::from_utf8(res[..].to_vec()).unwrap();
+        let str = res[..].as_ref().to_hex();
+        println!("{}", &str);
         str
     }
 
@@ -327,7 +328,10 @@ fn main() {
 
     let auth_redis = thread::spawn(move || {
         let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-        AuthRedis::new(client);
+        let mut auth = AuthRedis::new(client);
+        auth.store_pair();
+        println!("{}", auth.is_auth());
+        
     });
     let server = thread::spawn(move || {
         Server::new().listen(key.key); 
