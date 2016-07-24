@@ -69,12 +69,11 @@ impl Server {
                     thread::spawn(move|| {
                         match Server::handle_connection(stream) {
                             Ok(received) => match received.verify(&key) {
-                                true => { println!("Valid Token: {:?}", String::from_utf8(received.identifier));
-                                          
-                                          let field = Fields::new();
-                                          field.set_macaroon(received.identifier.to_vec());
-                                          field.set_id(received.caveats[0].caveat_id.to_vec());
-                                          field.set_video_request(received.caveats[1].caveat_id.to_vec()); 
+                                true => {  
+                                    let mut field = Fields::new();
+                                    field.set_macaroon(received.identifier.to_vec());
+                                    field.set_id(received.caveats[0].caveat_id.to_vec());
+                                    field.set_video_request(received.caveats[1].caveat_id.to_vec()); 
                                 },
                                 false => { println!("false"); 
                                 },
@@ -283,33 +282,34 @@ impl AuthRedis {
         key
     }
 
-    fn hash<'a>(&self) -> &'a str {
+    fn hash(&mut self) -> String {
         let mut sha3 = Keccak::new_sha3_256();
         sha3.update(&self.field.id);
         sha3.update(&self.field.video_requested);
         sha3.update(&self.pii_key.key[..]);
         let mut res: [u8; 32] = [0; 32];
         sha3.finalize(&mut res);
-        str::from_utf8(&res[..]);
+        let str = String::from_utf8(res[..].to_vec()).unwrap();
+        str
     }
 
-    fn store_pair<'a>(&self) -> &mut Cmd {
-        redis::cmd("SET").arg(self.hash()).arg(&self.field.macaroon_id[..])
+    fn store_pair(&mut self) -> redis::RedisResult<()> {
+        redis::cmd("SET").arg(self.hash()).arg(&self.field.macaroon_id[..]).query(&self.token_store.connection)
     }
 
 
-    fn is_auth<'a>(&self) -> bool {
+    fn is_auth(&mut self) -> bool {
         match redis::cmd("EXISTS").arg(self.hash())
-                                 .arg(self.field.macaroon_id)
-                                 .query(self.token_store.connection) {
-            Ok(x) => true,
+                                 .arg(self.field.macaroon_id.clone())
+                                 .query(&self.token_store.connection) {
+            Ok(()) => true,
             Err(e) => false,
         }
     }
 
-    fn revoke<'a>(&self) -> redis::RedisResult<()> {
+    fn revoke(&mut self) -> redis::RedisResult<()> {
         redis::cmd("DEL").arg(self.hash())
-                         .query(self.token_store.connection)
+                         .query(&self.token_store.connection)
     }
 }
 
@@ -345,6 +345,6 @@ fn main() {
     });
 
     client.join();
-
+    auth_redis.join();
     server.join();
 }
