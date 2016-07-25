@@ -1,15 +1,22 @@
+use hex::*;
+use redis;
+use super::key::Key;
+use super::api::Api;
+use super::token_store::TokenStore;
+use tiny_keccak::Keccak;
+
 pub struct AuthRedis {
-    token_store: StoreToken,
+    token_store: TokenStore,
     pii_key: Key,
-    field: Api,
+    api: Api,
 }
 
 impl AuthRedis {
     pub fn new(client: redis::Client) -> AuthRedis {
         AuthRedis {
-            token_store: StoreToken::new(client),
+            token_store: TokenStore::new(client),
             pii_key: AuthRedis::gen_pii_key(),
-            field: Api::new(),
+            api: Api::new(),
         }
     }
 
@@ -21,8 +28,8 @@ impl AuthRedis {
 
     fn hash(&self) -> String {
         let mut sha3 = Keccak::new_sha3_256();
-        sha3.update(&self.field.id);
-        sha3.update(&self.field.video_requested);
+        sha3.update(&self.api.id);
+        sha3.update(&self.api.video_requested);
         sha3.update(&self.pii_key.key[..]);
         let mut res: [u8; 32] = [0; 32];
         sha3.finalize(&mut res);
@@ -31,13 +38,13 @@ impl AuthRedis {
     }
 
     fn store_pair(&mut self) -> redis::RedisResult<()> {
-        redis::cmd("SET").arg(self.hash()).arg(&self.field.macaroon_id[..]).query(&self.token_store.connection)
+        redis::cmd("SET").arg(self.hash()).arg(&self.api.macaroon_id[..]).query(&self.token_store.connection)
     }
 
 
     pub fn is_auth(&mut self) -> bool {
         match redis::cmd("EXISTS").arg(self.hash())
-                                 .arg(self.field.macaroon_id.clone())
+                                 .arg(self.api.macaroon_id.clone())
                                  .query(&self.token_store.connection) {
             Ok(()) => true,
             Err(e) => false,

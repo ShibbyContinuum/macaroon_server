@@ -1,7 +1,7 @@
 use redis;
 
 pub struct TokenStore {
-    connection: redis::Client,
+    pub connection: redis::Client,
 }
 
 impl TokenStore {

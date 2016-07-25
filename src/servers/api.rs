@@ -1,7 +1,7 @@
 pub struct Api {
-    id: Vec<u8>,
-    macaroon_id: Vec<u8>,
-    video_requested: Vec<u8>,
+    pub id: Vec<u8>,
+    pub macaroon_id: Vec<u8>,
+    pub video_requested: Vec<u8>,
 }
 
 impl Api {

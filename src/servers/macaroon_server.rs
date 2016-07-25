@@ -16,14 +16,14 @@ use rand::chacha::ChaChaRng;
 
 use hex::*;
 
-pub struct Server {
+pub struct MacaroonServer {
     server: TcpListener,
     interface: MacaroonAuth,
 }
 
-impl Server {
-    pub fn new() -> Server {
-        Server {
+impl MacaroonServer {
+    pub fn new() -> MacaroonServer {
+        MacaroonServer {
             server: TcpListener::bind("127.0.0.1:12345").expect("Unable to bind"),
             interface: MacaroonAuth::new(),
         }
@@ -36,7 +36,7 @@ impl Server {
                 Ok(stream) => {
 // TODO: Implement ThreadPool::new()
                     thread::spawn(move|| {
-                        match Server::handle_connection(stream) {
+                        match MacaroonServer::handle_connection(stream) {
                             Ok(received) => match received.verify(&key) {
                                 true => {
                                     let mut api = Api::new();

@@ -1,21 +1,25 @@
-use std::io::BufWriter;
-use std::net::TcpStream;
+use std::io::{ BufWriter, BufReader };
+use std::net::{ TcpStream, TcpListener };
+
+use std::io::Read;
 use std::io::prelude::*;
 use std::prelude::*;
 
 pub struct User {
-    connection: BufWriter<TcpStream>,
+    writer: BufWriter<TcpStream>,
+    reader: BufReader<TcpListener>,
 }
 
 impl User {
     pub fn new() -> User {
         User {
-            connection: BufWriter::new(TcpStream::connect("127.0.0.1:12345").expect("Unable to Connect")),
+            writer: BufWriter::new(TcpStream::connect("127.0.0.1:12345").expect("Unable to Connect")),
+            reader: BufReader::new(TcpListener::bind("127.0.0.1:12346").expect("Unable to Bind")),
         }
     }
 
     pub fn write(&mut self, buf: &[u8]) {
-        match self.connection.write_all(buf) {
+        match self.writer.write_all(buf) {
             Ok(o) => {},
             Err(e) => println!("Write failed: {}", e),
         }

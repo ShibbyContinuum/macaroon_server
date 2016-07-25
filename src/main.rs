@@ -4,6 +4,9 @@ extern crate macaroons;
 
 use macaroon_server::servers::key::Key;
 use macaroon_server::servers::api::Api;
+use macaroon_server::servers::auth_redis::AuthRedis;
+use macaroon_server::servers::macaroon_server::MacaroonServer;
+use macaroon_server::user::user::User;
 use std::thread;
 use redis::*;
 
@@ -28,10 +31,6 @@ fn main() {
 
     key.genkey();
 
-    let mut api = Api::new();
-
-    let service_token = api.auth.minter.mint_token(&key);
-
     println!("Starting Server..");
 
     let auth_redis = thread::spawn(move || {
@@ -41,13 +40,15 @@ fn main() {
 
     });
     let server = thread::spawn(move || {
-        Server::new().listen(key.key);
-    });
+        let ms = MacaroonServer::new().listen(key.key);
+        let service_token = ms.interface.minter.mint_token(&key);
 
-    let s_token = add_caveats!(service_token,
-        Caveat::first_party(b"id = 00000000".to_vec()),
-        Caveat::first_party(b"video = Fire".to_vec())
-    );
+        let s_token = add_caveats!(service_token,
+            Caveat::first_party(b"id = 00000000".to_vec()),
+            Caveat::first_party(b"video = Fire".to_vec())
+        );
+
+    });
 
     println!("Starting Client!");
 
