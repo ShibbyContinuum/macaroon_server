@@ -2,7 +2,8 @@ extern crate macaroon_server;
 extern crate redis;
 extern crate macaroons;
 
-use macaroon_server::{ Server, Key, User, AuthRedis, Api };
+use macaroon_server::servers::key::Key;
+use macaroon_server::servers::api::Api;
 use std::thread;
 use redis::*;
 
