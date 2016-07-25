@@ -33,9 +33,6 @@ use hex::*;
 
 use redis::{ Commands, Connection, Client, ConnectionLike, Cmd };
 
-use serde_json::Value;
-use serde_json::builder;
-
 use tiny_keccak::Keccak;
 
 pub struct Server {
@@ -273,7 +270,7 @@ impl AuthRedis {
         key
     }
 
-    fn hash(&mut self) -> String {
+    fn hash(&self) -> String {
         let mut sha3 = Keccak::new_sha3_256();
         sha3.update(&self.field.id);
         sha3.update(&self.field.video_requested);
@@ -298,8 +295,8 @@ impl AuthRedis {
         }
     }
 
-    fn revoke(&mut self) -> redis::RedisResult<()> {
-        redis::cmd("DEL").arg(self.hash())
+    fn revoke(&self) -> redis::RedisResult<()> {
+        redis::cmd("DEL").arg(&self.hash())
                          .query(&self.token_store.connection)
     }
 }
