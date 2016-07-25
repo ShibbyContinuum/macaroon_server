@@ -1,7 +1,6 @@
 use std::io::{ BufWriter, BufReader };
 use std::net::{ TcpStream, TcpListener };
 
-use std::io::Read;
 use std::io::prelude::*;
 use std::prelude::*;
 
