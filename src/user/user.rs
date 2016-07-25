@@ -6,14 +6,14 @@ use std::prelude::*;
 
 pub struct User {
     writer: BufWriter<TcpStream>,
-    reader: BufReader<TcpListener>,
+    reader: TcpListener,
 }
 
 impl User {
     pub fn new() -> User {
         User {
             writer: BufWriter::new(TcpStream::connect("127.0.0.1:12345").expect("Unable to Connect")),
-            reader: BufReader::new(TcpListener::bind("127.0.0.1:12346").expect("Unable to Bind")),
+            reader: TcpListener::bind("127.0.0.1:12346").expect("Unable to Bind"),
         }
     }
 

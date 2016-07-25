@@ -37,7 +37,7 @@ impl MacaroonServer {
 // TODO: Implement ThreadPool::new()
                     thread::spawn(move|| {
                         match MacaroonServer::handle_connection(stream) {
-                            Ok(received) => match received.verify(&key) {
+                            Ok(received) => match received.verify_integrity(&key) {
                                 true => {
                                     let mut api = Api::new();
                                     api.set_macaroon(received.identifier.to_vec());
@@ -67,9 +67,6 @@ impl MacaroonServer {
 
 pub struct MacaroonAuth {
     pub minter: MacaroonMinter,
-    challenge: Option<Token>,
-    new_token: Option<Token>,
-    verifier: Option<Verifier>,
 }
 
 pub struct MacaroonMinter {
@@ -80,9 +77,6 @@ impl MacaroonAuth {
     pub fn new() -> MacaroonAuth {
         MacaroonAuth {
             minter: MacaroonMinter::new(),
-            challenge: None,
-            new_token: None,
-            verifier: None,
         }
     }
 }
