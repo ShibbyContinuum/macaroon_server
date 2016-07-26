@@ -40,7 +40,8 @@ fn main() {
 
     });
     let server = thread::spawn(move || {
-        let ms = MacaroonServer::new().listen(key.key);
+        let ms = MacaroonServerBuilder::new();
+        ms.listen(key.key);
         let service_token = ms.interface.minter.mint_token(&key);
 
         let s_token = add_caveats!(service_token,

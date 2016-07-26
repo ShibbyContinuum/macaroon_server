@@ -2,6 +2,7 @@
 use super::key::Key;
 use super::api::Api;
 use std::net::TcpListener;
+use std::net::Ipv4Addr;
 use std::io::BufReader;
 use std::io::Read;
 use std::net::TcpStream;
@@ -16,28 +17,38 @@ use rand::chacha::ChaChaRng;
 
 use hex::*;
 
-pub struct MacaroonServer {
-    server: TcpListener,
+pub struct MacaroonServerBuilder {
+    key: Key,
+    addr: Ipv4Addr,
+    port: u16,
     interface: MacaroonAuth,
 }
 
-impl MacaroonServer {
-    pub fn new() -> MacaroonServer {
-        MacaroonServer {
-            server: TcpListener::bind("127.0.0.1:12345").expect("Unable to bind"),
+impl MacaroonServerBuilder {
+    pub fn new() -> MacaroonServerBuilder {
+        MacaroonServerBuilder {
+            key: Key::new(),
+            addr: Ipv4Addr::new(127,0,0,1),
+            port: 12345,
             interface: MacaroonAuth::new(),
         }
     }
+}
 
-    pub fn listen(&self, key: [u8; 512]) {
+pub struct MacaroonServer {}
+
+impl MacaroonServer {
+
+    pub fn listen(&self, server_builder: MacaroonServerBuilder) {
+        let server = TcpListener::bind((server_builder.addr, server_builder.port)).expect("Unable to bind");
         println!("Listening");
-        for stream in self.server.incoming() {
+        for stream in server.incoming() {
             match stream {
                 Ok(stream) => {
 // TODO: Implement ThreadPool::new()
                     thread::spawn(move|| {
                         match MacaroonServer::handle_connection(stream) {
-                            Ok(received) => match received.verify_integrity(&key) {
+                            Ok(received) => match received.verify_integrity(&server_builder.key.key) {
                                 true => {
                                     let mut api = Api::new();
                                     api.set_macaroon(received.identifier.to_vec());
