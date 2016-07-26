@@ -17,6 +17,7 @@ use rand::chacha::ChaChaRng;
 
 use hex::*;
 
+
 pub struct MacaroonServerBuilder {
     key: Key,
     addr: Ipv4Addr,
@@ -48,7 +49,7 @@ impl MacaroonServer {
 // TODO: Implement ThreadPool::new()
                     thread::spawn(move|| {
                         match MacaroonServer::handle_connection(stream) {
-                            Ok(received) => match received.verify_integrity(&server_builder.key.key) {
+                            Ok(received) => match received.verify_integrity(&server_builder.key.key.clone()) {
                                 true => {
                                     let mut api = Api::new();
                                     api.set_macaroon(received.identifier.to_vec());
@@ -76,9 +77,11 @@ impl MacaroonServer {
     }
 }
 
+
 pub struct MacaroonAuth {
     pub minter: MacaroonMinter,
 }
+
 
 pub struct MacaroonMinter {
     id_rng: ChaChaRng,
